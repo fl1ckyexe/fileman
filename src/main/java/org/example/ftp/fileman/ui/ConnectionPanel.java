@@ -150,7 +150,11 @@ public class ConnectionPanel extends GridPane {
                     statusLabel.getStyleClass().removeAll("status-disconnected", "status-connecting", "status-connected");
                     statusLabel.getStyleClass().add("status-error");
                     connectButton.setDisable(false);
-                    showAlert("Connection Error", "Failed to connect to FTP server. Please check your credentials.");
+                    String msg = ftpService.getLastErrorMessage();
+                    if (msg == null || msg.isBlank()) {
+                        msg = "Failed to connect to FTP server.";
+                    }
+                    showAlert("Connection Error", msg);
                 }
             });
         }).start();
@@ -169,6 +173,16 @@ public class ConnectionPanel extends GridPane {
         portField.setDisable(false);
         usernameField.setDisable(false);
         passwordField.setDisable(false);
+    }
+
+    /**
+     * Used when the server becomes unavailable (socket closed / port down) and we need to reflect it in UI.
+     */
+    public void forceDisconnect(String reason) {
+        handleDisconnect();
+        if (reason != null && !reason.isBlank()) {
+            statusLabel.setText(reason);
+        }
     }
     
     public String getCurrentUsername() {

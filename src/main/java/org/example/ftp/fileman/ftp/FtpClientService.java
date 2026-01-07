@@ -21,6 +21,10 @@ import java.util.regex.Pattern;
 public class FtpClientService {
     private FTPClient ftpClient;
     private boolean connected = false;
+    private static final int SOCKET_TIMEOUT_MS = 5000;
+
+    private volatile FtpErrorType lastErrorType = FtpErrorType.NONE;
+    private volatile String lastErrorMessage = "";
 
     public FtpClientService() {
         this.ftpClient = new FTPClient();
@@ -28,8 +32,61 @@ public class FtpClientService {
         ftpClient.setParserFactory(parserFactory);
     }
 
+    public FtpErrorType getLastErrorType() {
+        return lastErrorType;
+    }
+
+    public String getLastErrorMessage() {
+        return lastErrorMessage == null ? "" : lastErrorMessage;
+    }
+
+    private void clearLastError() {
+        lastErrorType = FtpErrorType.NONE;
+        lastErrorMessage = "";
+    }
+
+    private boolean fail(FtpErrorType type, String message) {
+        lastErrorType = type == null ? FtpErrorType.UNKNOWN : type;
+        lastErrorMessage = message == null ? "" : message;
+        return false;
+    }
+
+    private String replySummary() {
+        try {
+            int code = ftpClient.getReplyCode();
+            String rs = ftpClient.getReplyString();
+            if (rs == null) rs = "";
+            rs = rs.trim();
+            return rs.isEmpty() ? String.valueOf(code) : (code + " " + rs);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private FtpErrorType mapReplyCode(int code) {
+        return switch (code) {
+            case 530 -> FtpErrorType.INVALID_CREDENTIALS;
+            case 550 -> FtpErrorType.PERMISSION_DENIED;
+            case 425, 426 -> FtpErrorType.SERVER_UNAVAILABLE;
+            default -> FtpErrorType.UNKNOWN;
+        };
+    }
+
+    private FtpErrorType mapReplyForPath(String reply) {
+        if (reply == null) return FtpErrorType.UNKNOWN;
+        String r = reply.toLowerCase();
+        if (r.contains("not found") || r.contains("no such file") || r.contains("file not found") || r.contains("can't find")) {
+            return FtpErrorType.PATH_NOT_FOUND;
+        }
+        if (r.contains("permission") || r.contains("denied") || r.contains("access")) {
+            return FtpErrorType.PERMISSION_DENIED;
+        }
+        return FtpErrorType.UNKNOWN;
+    }
+
     public boolean connect(String host, int port, String username, String password) {
         try {
+            clearLastError();
             if (ftpClient.isConnected()) {
                 try {
                     ftpClient.disconnect();
@@ -43,7 +100,12 @@ public class FtpClientService {
             FTPFileEntryParserFactory parserFactory = new DefaultFTPFileEntryParserFactory();
             ftpClient.setParserFactory(parserFactory);
 
+            ftpClient.setConnectTimeout(SOCKET_TIMEOUT_MS);
+            ftpClient.setDefaultTimeout(SOCKET_TIMEOUT_MS);
+            ftpClient.setDataTimeout(SOCKET_TIMEOUT_MS);
+
             ftpClient.connect(host, port);
+            ftpClient.setSoTimeout(SOCKET_TIMEOUT_MS);
             int replyCode = ftpClient.getReplyCode();
 
             if (!FTPReply.isPositiveCompletion(replyCode)) {
@@ -51,7 +113,7 @@ public class FtpClientService {
                 ftpClient.disconnect();
                 } catch (IOException e) {
                 }
-                return false;
+                return fail(FtpErrorType.SERVER_UNAVAILABLE, "Server refused connection (" + replySummary() + ")");
             }
 
             boolean loggedIn = ftpClient.login(username, password);
@@ -64,7 +126,7 @@ public class FtpClientService {
                 ftpClient.disconnect();
                 } catch (IOException e) {
                 }
-                return false;
+                return fail(FtpErrorType.INVALID_CREDENTIALS, "Invalid username/password (" + replySummary() + ")");
             }
         } catch (IOException e) {
             try {
@@ -73,7 +135,7 @@ public class FtpClientService {
                 }
             } catch (IOException e2) {
             }
-            return false;
+            return fail(FtpErrorType.SERVER_UNAVAILABLE, "Server went offline / unreachable");
         }
     }
 
@@ -84,7 +146,44 @@ public class FtpClientService {
                 ftpClient.disconnect();
             }
             connected = false;
+            clearLastError();
         } catch (IOException e) {
+        }
+    }
+
+    private void disconnectSilently() {
+        try {
+            if (ftpClient != null && ftpClient.isConnected()) {
+                try {
+                    ftpClient.logout();
+                } catch (Exception ignored) {
+                }
+                ftpClient.disconnect();
+            }
+        } catch (Exception ignored) {
+        } finally {
+            connected = false;
+        }
+    }
+
+    /**
+     * ABOR + best-effort cleanup of pending data transfer on control connection.
+     * If cleanup fails, we mark the connection as dead and disconnect.
+     */
+    private void abortAndReset() {
+        try {
+            ftpClient.abort();
+        } catch (Exception e) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Server went offline during transfer");
+            disconnectSilently();
+            return;
+        }
+
+        try {
+            ftpClient.completePendingCommand();
+        } catch (Exception e) {
+            fail(FtpErrorType.PROTOCOL_ERROR, "Transfer cancelled, but session needs reconnect");
+            disconnectSilently();
         }
     }
 
@@ -96,10 +195,17 @@ public class FtpClientService {
         List<FtpFileInfo> files = new ArrayList<>();
 
         if (!isConnected()) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Not connected");
             return files;
         }
 
-        files = parseListManually(path);
+        try {
+            files = parseListManually(path);
+        } catch (IOException e) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Server went offline / unreachable");
+            disconnectSilently();
+            throw e;
+        }
 
         return files;
     }
@@ -314,15 +420,22 @@ public class FtpClientService {
 
     public String getCurrentDirectory() throws IOException {
         if (!isConnected()) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Not connected");
             return "/";
         }
-        String pwd = ftpClient.printWorkingDirectory();
-        return pwd;
+        try {
+            return ftpClient.printWorkingDirectory();
+        } catch (IOException e) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Server went offline / unreachable");
+            disconnectSilently();
+            throw e;
+        }
     }
 
     public boolean changeDirectory(String path) throws IOException {
 
         if (!isConnected()) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Not connected");
             return false;
         }
 
@@ -332,7 +445,14 @@ public class FtpClientService {
         } catch (Exception e) {
         }
 
-        boolean result = ftpClient.changeWorkingDirectory(path);
+        boolean result;
+        try {
+            result = ftpClient.changeWorkingDirectory(path);
+        } catch (IOException e) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Server went offline / unreachable");
+            disconnectSilently();
+            throw e;
+        }
 
         if (result) {
             try {
@@ -340,6 +460,19 @@ public class FtpClientService {
             } catch (Exception e) {
             }
         } else {
+            int code = ftpClient.getReplyCode();
+            String rep = replySummary();
+            FtpErrorType t = mapReplyCode(code);
+            if (t == FtpErrorType.PERMISSION_DENIED) {
+                t = mapReplyForPath(rep);
+            }
+            if (t == FtpErrorType.PATH_NOT_FOUND) {
+                fail(t, "Folder not found: " + path + " (" + rep + ")");
+            } else if (t == FtpErrorType.PERMISSION_DENIED) {
+                fail(t, "Permission denied: " + path + " (" + rep + ")");
+            } else {
+                fail(FtpErrorType.UNKNOWN, "Failed to change directory: " + path + " (" + rep + ")");
+            }
             try {
                 String currentDirAfter = ftpClient.printWorkingDirectory();
             } catch (Exception e) {
@@ -376,16 +509,56 @@ public class FtpClientService {
 
     public boolean deleteFile(String path) throws IOException {
         if (!isConnected()) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Not connected");
             return false;
         }
-        return ftpClient.deleteFile(path);
+        boolean ok;
+        try {
+            ok = ftpClient.deleteFile(path);
+        } catch (IOException e) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Server went offline / unreachable");
+            disconnectSilently();
+            throw e;
+        }
+        if (!ok) {
+            String rep = replySummary();
+            FtpErrorType t = mapReplyForPath(rep);
+            if (t == FtpErrorType.PERMISSION_DENIED) {
+                fail(t, "Permission denied: cannot delete " + path + " (" + rep + ")");
+            } else if (t == FtpErrorType.PATH_NOT_FOUND) {
+                fail(t, "File not found: " + path + " (" + rep + ")");
+            } else {
+                fail(FtpErrorType.UNKNOWN, "Failed to delete " + path + " (" + rep + ")");
+            }
+        }
+        return ok;
     }
 
     public boolean deleteDirectory(String path) throws IOException {
         if (!isConnected()) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Not connected");
             return false;
         }
-        return ftpClient.removeDirectory(path);
+        boolean ok;
+        try {
+            ok = ftpClient.removeDirectory(path);
+        } catch (IOException e) {
+            fail(FtpErrorType.SERVER_UNAVAILABLE, "Server went offline / unreachable");
+            disconnectSilently();
+            throw e;
+        }
+        if (!ok) {
+            String rep = replySummary();
+            FtpErrorType t = mapReplyForPath(rep);
+            if (t == FtpErrorType.PERMISSION_DENIED) {
+                fail(t, "Permission denied: cannot delete folder " + path + " (" + rep + ")");
+            } else if (t == FtpErrorType.PATH_NOT_FOUND) {
+                fail(t, "Folder not found: " + path + " (" + rep + ")");
+            } else {
+                fail(FtpErrorType.UNKNOWN, "Failed to delete folder " + path + " (" + rep + ")");
+            }
+        }
+        return ok;
     }
 
     public interface UploadProgressCallback {
@@ -550,6 +723,10 @@ public class FtpClientService {
                 }
             }
 
+            if (!wasCancelled && inputStreamToUse instanceof ProgressTrackingInputStream) {
+                wasCancelled = ((ProgressTrackingInputStream) inputStreamToUse).isCancelled();
+            }
+
             if (wasCancelled) {
                 try {
                     inputStreamToUse.close();
@@ -559,10 +736,7 @@ public class FtpClientService {
                     outputStreamToUse.close();
                 } catch (IOException e) {
                 }
-                try {
-                    ftpClient.abort();
-                } catch (Exception e) {
-                }
+                abortAndReset();
                 return false;
             }
 
@@ -586,6 +760,7 @@ public class FtpClientService {
                 return false;
             }
         } catch (IOException e) {
+            disconnectSilently();
             return false;
         } finally {
             try {
@@ -772,6 +947,10 @@ public class FtpClientService {
                 wasCancelled = true;
             }
 
+            if (!wasCancelled && inputStreamToUse instanceof ProgressTrackingDownloadInputStream) {
+                wasCancelled = ((ProgressTrackingDownloadInputStream) inputStreamToUse).isCancelled();
+            }
+
             if (wasCancelled) {
                 try {
                     inputStreamToUse.close();
@@ -789,11 +968,7 @@ public class FtpClientService {
                 } catch (Exception e) {
                 }
 
-                try {
-                    ftpClient.abort();
-                } catch (Exception e) {
-
-                }
+                abortAndReset();
                 return false;
             }
 
@@ -816,6 +991,7 @@ public class FtpClientService {
             }
 
         } catch (IOException e) {
+            disconnectSilently();
             return false;
         } finally {
             try {
@@ -844,6 +1020,10 @@ public class FtpClientService {
             this.delegate = delegate;
             this.totalBytes = totalBytes;
             this.callback = callback;
+        }
+
+        public boolean isCancelled() {
+            return cancelled;
         }
 
         @Override

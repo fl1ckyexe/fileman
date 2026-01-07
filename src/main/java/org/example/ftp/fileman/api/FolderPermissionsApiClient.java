@@ -278,6 +278,26 @@ public class FolderPermissionsApiClient {
         return extractLong(json, "rateLimit");
     }
 
+    /**
+     * Returns server-side global upload limit (bytes/sec).
+     * Backwards compatible: falls back to globalRateLimit if globalUploadLimit is not present.
+     */
+    public Long getGlobalUploadLimit()
+            throws IOException, InterruptedException {
+
+        HttpRequest req = request("/api/limits")
+                .GET()
+                .build();
+
+        HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (resp.statusCode() != 200) throw httpError(resp);
+
+        String json = resp.body();
+        Long upload = extractLong(json, "globalUploadLimit");
+        if (upload != null) return upload;
+        return extractLong(json, "globalRateLimit");
+    }
+
     public static class UserPermissions {
         private final boolean read;
         private final boolean write;
