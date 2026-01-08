@@ -249,7 +249,7 @@ public class FileBrowserPanel extends BorderPane {
         }
 
         String[] parts = path.split("/");
-        java.util.ArrayList<String> normalizedParts = new java.util.ArrayList<>();
+        ArrayList<String> normalizedParts = new ArrayList<>();
 
         for (String part : parts) {
             if (part.isEmpty() || part.equals(".")) {
@@ -462,6 +462,11 @@ public class FileBrowserPanel extends BorderPane {
         if (currentUsername == null || currentUsername.isEmpty()) {
             clearAllTables();
             return;
+        }
+
+        String password = connectionPanel.getCurrentPassword();
+        if (password != null) {
+            apiClient.setCredentials(currentUsername, password);
         }
 
         if (lastUsernameSeen == null || !lastUsernameSeen.equals(currentUsername)) {

@@ -166,10 +166,7 @@ public class FtpClientService {
         }
     }
 
-    /**
-     * ABOR + best-effort cleanup of pending data transfer on control connection.
-     * If cleanup fails, we mark the connection as dead and disconnect.
-     */
+
     private void abortAndReset() {
         try {
             ftpClient.abort();
@@ -562,19 +559,11 @@ public class FtpClientService {
     }
 
     public interface UploadProgressCallback {
-        /**
-         * Р’С‹Р·С‹РІР°РµС‚СЃСЏ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ РїСЂРѕРіСЂРµСЃСЃР° Р·Р°РіСЂСѓР·РєРё.
-         * @param bytesTransferred РєРѕР»РёС‡РµСЃС‚РІРѕ РїРµСЂРµРґР°РЅРЅС‹С… Р±Р°Р№С‚
-         * @param totalBytes РѕР±С‰РёР№ СЂР°Р·РјРµСЂ С„Р°Р№Р»Р°
-         * @param speedBytesPerSecond СЃРєРѕСЂРѕСЃС‚СЊ РїРµСЂРµРґР°С‡Рё РІ Р±Р°Р№С‚Р°С… РІ СЃРµРєСѓРЅРґСѓ
-         * @return true, РµСЃР»Рё РїРµСЂРµРґР°С‡Сѓ РЅСѓР¶РЅРѕ РїСЂРѕРґРѕР»Р¶РёС‚СЊ, false - РµСЃР»Рё РѕС‚РјРµРЅРёС‚СЊ
-         */
+
         boolean onProgress(long bytesTransferred, long totalBytes, double speedBytesPerSecond);
     }
 
-    /**
-     * РџСЂРѕСЃС‚РѕР№ RateLimiter РґР»СЏ РєР»РёРµРЅС‚Р°, Р°РЅР°Р»РѕРіРёС‡РЅС‹Р№ СЃРµСЂРІРµСЂРЅРѕРјСѓ
-     */
+
     private static class ClientRateLimiter {
         private volatile long bytesPerSecond;
         private long available;
@@ -620,20 +609,17 @@ public class FtpClientService {
         }
     }
 
-    /**
-     * ThrottledInputStream РґР»СЏ РєР»РёРµРЅС‚Р°, РѕРіСЂР°РЅРёС‡РёРІР°СЋС‰РёР№ СЃРєРѕСЂРѕСЃС‚СЊ С‡С‚РµРЅРёСЏ
-     * (Р°РЅР°Р»РѕРіРёС‡РЅРѕ СЃРµСЂРІРµСЂРЅРѕРјСѓ ThrottledInputStream РїСЂРё СЃРєР°С‡РёРІР°РЅРёРё)
-     */
-    private static class ThrottledInputStream extends java.io.FilterInputStream {
+
+    private static class ThrottledInputStream extends FilterInputStream {
         private final ClientRateLimiter limiter;
 
-        public ThrottledInputStream(java.io.InputStream in, ClientRateLimiter limiter) {
+        public ThrottledInputStream(InputStream in, ClientRateLimiter limiter) {
             super(in);
             this.limiter = limiter;
         }
 
         @Override
-        public int read(byte[] b, int off, int len) throws java.io.IOException {
+        public int read(byte[] b, int off, int len) throws IOException {
             int bytesRead = super.read(b, off, len);
             if (bytesRead > 0) {
                 limiter.acquire(bytesRead);
@@ -642,20 +628,14 @@ public class FtpClientService {
         }
 
         @Override
-        public int read() throws java.io.IOException {
+        public int read() throws IOException {
             limiter.acquire(1);
             return super.read();
         }
     }
 
     public interface DownloadProgressCallback {
-        /**
-         * Р’С‹Р·С‹РІР°РµС‚СЃСЏ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ РїСЂРѕРіСЂРµСЃСЃР° СЃРєР°С‡РёРІР°РЅРёСЏ.
-         * @param bytesTransferred РєРѕР»РёС‡РµСЃС‚РІРѕ РїРµСЂРµРґР°РЅРЅС‹С… Р±Р°Р№С‚
-         * @param totalBytes РѕР±С‰РёР№ СЂР°Р·РјРµСЂ С„Р°Р№Р»Р°
-         * @param speedBytesPerSecond СЃРєРѕСЂРѕСЃС‚СЊ РїРµСЂРµРґР°С‡Рё РІ Р±Р°Р№С‚Р°С… РІ СЃРµРєСѓРЅРґСѓ
-         * @return true, РµСЃР»Рё РїРµСЂРµРґР°С‡Сѓ РЅСѓР¶РЅРѕ РїСЂРѕРґРѕР»Р¶РёС‚СЊ, false - РµСЃР»Рё РѕС‚РјРµРЅРёС‚СЊ
-         */
+
         boolean onProgress(long bytesTransferred, long totalBytes, double speedBytesPerSecond);
     }
 

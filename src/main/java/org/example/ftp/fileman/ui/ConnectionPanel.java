@@ -10,10 +10,10 @@ import org.example.ftp.fileman.ftp.FtpClientService;
 import org.example.ftp.fileman.ui.util.DialogStyler;
 
 public class ConnectionPanel extends GridPane {
-    
+
     private final FtpClientService ftpService;
     private final Runnable onConnectedCallback;
-    
+
     private TextField hostField;
     private TextField portField;
     private TextField usernameField;
@@ -21,20 +21,21 @@ public class ConnectionPanel extends GridPane {
     private Button connectButton;
     private Button disconnectButton;
     private Label statusLabel;
-    
+
     private String currentUsername;
+    private String currentPassword;
     private String currentHost;
 
     public ConnectionPanel(FtpClientService ftpService, Runnable onConnectedCallback) {
         this.ftpService = ftpService;
         this.onConnectedCallback = onConnectedCallback;
-        
+
         getStyleClass().add("connection-panel");
         setPadding(new Insets(15));
         setHgap(15);
         setVgap(12);
         setAlignment(Pos.CENTER_LEFT);
-        
+
         initComponents();
         layoutComponents();
     }
@@ -43,29 +44,29 @@ public class ConnectionPanel extends GridPane {
         hostField = new TextField();
         hostField.setPromptText("localhost");
         hostField.setPrefWidth(150);
-        
+
         portField = new TextField();
         portField.setPromptText("2121");
         portField.setPrefWidth(80);
         portField.setText("2121");
-        
+
         usernameField = new TextField();
         usernameField.setPromptText("Username");
         usernameField.setPrefWidth(120);
-        
+
         passwordField = new PasswordField();
         passwordField.setPromptText("Password");
         passwordField.setPrefWidth(120);
-        
+
         connectButton = new Button("Connect");
         connectButton.getStyleClass().add("primary");
         connectButton.setOnAction(e -> handleConnect());
-        
+
         disconnectButton = new Button("Disconnect");
         disconnectButton.getStyleClass().add("danger");
         disconnectButton.setOnAction(e -> handleDisconnect());
         disconnectButton.setDisable(true);
-        
+
         statusLabel = new Label("Not connected");
         statusLabel.getStyleClass().add("status-disconnected");
     }
@@ -74,19 +75,19 @@ public class ConnectionPanel extends GridPane {
         Label hostLabel = new Label("Host:");
         add(hostLabel, 0, 0);
         add(hostField, 1, 0);
-        
+
         Label portLabel = new Label("Port:");
         add(portLabel, 2, 0);
         add(portField, 3, 0);
-        
+
         Label usernameLabel = new Label("Username:");
         add(usernameLabel, 4, 0);
         add(usernameField, 5, 0);
-        
+
         Label passwordLabel = new Label("Password:");
         add(passwordLabel, 6, 0);
         add(passwordField, 7, 0);
-        
+
         HBox buttonBox = new HBox(10);
         buttonBox.setAlignment(Pos.CENTER_LEFT);
         buttonBox.getChildren().addAll(connectButton, disconnectButton, new Separator(), statusLabel);
@@ -98,12 +99,12 @@ public class ConnectionPanel extends GridPane {
         String portText = portField.getText().trim();
         String username = usernameField.getText().trim();
         String password = passwordField.getText();
-        
+
         if (host.isEmpty()) {
             showAlert("Error", "Please enter host address");
             return;
         }
-        
+
         int port = 21;
         try {
             if (!portText.isEmpty()) {
@@ -113,24 +114,25 @@ public class ConnectionPanel extends GridPane {
             showAlert("Error", "Invalid port number");
             return;
         }
-        
+
         if (username.isEmpty()) {
             showAlert("Error", "Please enter username");
             return;
         }
-        
+
         connectButton.setDisable(true);
         statusLabel.setText("Connecting...");
         statusLabel.getStyleClass().removeAll("status-disconnected", "status-connected", "status-error");
         statusLabel.getStyleClass().add("status-connecting");
-        
+
         int finalPort = port;
         new Thread(() -> {
             boolean connected = ftpService.connect(host, finalPort, username, password);
-            
+
             javafx.application.Platform.runLater(() -> {
                 if (connected) {
                     currentUsername = username;
+                    currentPassword = password;
                     currentHost = host;
                     statusLabel.setText("Connected");
                     statusLabel.getStyleClass().removeAll("status-disconnected", "status-connecting", "status-error");
@@ -141,7 +143,7 @@ public class ConnectionPanel extends GridPane {
                     portField.setDisable(false);
                     usernameField.setDisable(true);
                     passwordField.setDisable(true);
-                    
+
                     if (onConnectedCallback != null) {
                         onConnectedCallback.run();
                     }
@@ -163,6 +165,7 @@ public class ConnectionPanel extends GridPane {
     private void handleDisconnect() {
         ftpService.disconnect();
         currentUsername = null;
+        currentPassword = null;
         currentHost = null;
         statusLabel.setText("Disconnected");
         statusLabel.getStyleClass().removeAll("status-connected", "status-connecting", "status-error");
@@ -175,20 +178,21 @@ public class ConnectionPanel extends GridPane {
         passwordField.setDisable(false);
     }
 
-    /**
-     * Used when the server becomes unavailable (socket closed / port down) and we need to reflect it in UI.
-     */
     public void forceDisconnect(String reason) {
         handleDisconnect();
         if (reason != null && !reason.isBlank()) {
             statusLabel.setText(reason);
         }
     }
-    
+
     public String getCurrentUsername() {
         return currentUsername;
     }
-    
+
+    public String getCurrentPassword() {
+        return currentPassword;
+    }
+
     public String getCurrentHost() {
         return currentHost;
     }
@@ -199,10 +203,10 @@ public class ConnectionPanel extends GridPane {
         alert.setHeaderText(null);
         alert.setContentText(message);
         alert.getDialogPane().setHeader(null);
-        
+
         Window ownerWindow = hostField.getScene().getWindow();
         DialogStyler.applyStyles(alert, ownerWindow);
-        
+
         alert.showAndWait();
     }
 }

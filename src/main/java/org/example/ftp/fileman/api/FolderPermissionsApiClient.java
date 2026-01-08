@@ -10,13 +10,15 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Base64;
 
 public class FolderPermissionsApiClient {
 
     private static final String DEFAULT_HOST = "localhost";
-    private static final String TOKEN = "ADMIN_SECRET";
 
     private volatile String baseUrl;
+    private volatile String username;
+    private volatile String password;
     private final HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
             .build();
@@ -40,11 +42,23 @@ public class FolderPermissionsApiClient {
         this.baseUrl = protocol + "://" + host + ":9090";
     }
 
-    private HttpRequest.Builder request(String path) {
-        return HttpRequest.newBuilder()
+    public void setCredentials(String username, String password) {
+        this.username = username;
+        this.password = password;
+    }
+
+    private HttpRequest.Builder request(String path, boolean requireAuth) {
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + path))
-                .timeout(Duration.ofSeconds(10))
-                .header("Authorization", "Bearer " + TOKEN);
+                .timeout(Duration.ofSeconds(10));
+
+        if (requireAuth && username != null && password != null) {
+            String credentials = username + ":" + password;
+            String encoded = Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
+            builder.header("Authorization", "Basic " + encoded);
+        }
+
+        return builder;
     }
 
     private static String urlEncode(String s) {
@@ -79,7 +93,7 @@ public class FolderPermissionsApiClient {
     public List<FolderPermission> getFolderPermissions(String username)
             throws IOException, InterruptedException {
 
-        HttpRequest req = request("/api/folders/permissions?username=" + urlEncode(username))
+        HttpRequest req = request("/api/folders/permissions?username=" + urlEncode(username), false)
                 .GET()
                 .build();
 
@@ -99,7 +113,7 @@ public class FolderPermissionsApiClient {
             r, w, e
         );
 
-        HttpRequest req = request("/api/folders/permissions/save")
+        HttpRequest req = request("/api/folders/permissions/save", false)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
                 .build();
@@ -221,7 +235,7 @@ public class FolderPermissionsApiClient {
     public List<SharedFolder> getSharedFolders(String username)
             throws IOException, InterruptedException {
 
-        HttpRequest req = request("/api/shared-folders?username=" + urlEncode(username))
+        HttpRequest req = request("/api/shared-folders?username=" + urlEncode(username), true)
                 .GET()
                 .build();
 
@@ -244,7 +258,7 @@ public class FolderPermissionsApiClient {
             execute
         );
 
-        HttpRequest req = request("/api/shared-folders/share")
+        HttpRequest req = request("/api/shared-folders/share", true)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
                 .build();
@@ -256,7 +270,7 @@ public class FolderPermissionsApiClient {
     public void deleteSharedFolder(String folderPath)
             throws IOException, InterruptedException {
 
-        HttpRequest req = request("/api/shared-folders/delete?folderPath=" + urlEncode(folderPath))
+        HttpRequest req = request("/api/shared-folders/delete?folderPath=" + urlEncode(folderPath), true)
                 .DELETE()
                 .build();
 
@@ -267,7 +281,7 @@ public class FolderPermissionsApiClient {
     public Long getUserRateLimit(String username)
             throws IOException, InterruptedException {
 
-        HttpRequest req = request("/api/users/" + urlEncode(username))
+        HttpRequest req = request("/api/users/" + urlEncode(username), false)
                 .GET()
                 .build();
 
@@ -278,14 +292,11 @@ public class FolderPermissionsApiClient {
         return extractLong(json, "rateLimit");
     }
 
-    /**
-     * Returns server-side global upload limit (bytes/sec).
-     * Backwards compatible: falls back to globalRateLimit if globalUploadLimit is not present.
-     */
+
     public Long getGlobalUploadLimit()
             throws IOException, InterruptedException {
 
-        HttpRequest req = request("/api/limits")
+        HttpRequest req = request("/api/limits", false)
                 .GET()
                 .build();
 
@@ -317,7 +328,7 @@ public class FolderPermissionsApiClient {
     public UserPermissions getUserPermissions(String username)
             throws IOException, InterruptedException {
 
-        HttpRequest req = request("/api/user-permissions?user=" + urlEncode(username))
+        HttpRequest req = request("/api/user-permissions?user=" + urlEncode(username), false)
                 .GET()
                 .build();
 
